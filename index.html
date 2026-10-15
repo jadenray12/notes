@@ -139,6 +139,8 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
 .bl.slow { border-color: var(--bad); }
 .bl.slow .blv { color: var(--bad); }
 .stats .btn.link { align-self: flex-start; }
+.statshead { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
+.seg.small button { padding: 5px 10px; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -185,11 +187,17 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
   </div>
 
   <section class="stats" aria-label="Speed">
-    <div class="eyebrow" id="stMode">Speed</div>
+    <div class="statshead">
+      <div class="eyebrow" id="stMode">Speed</div>
+      <div class="seg small" role="group" aria-label="Stats range">
+        <button id="scopeSession" aria-pressed="true">This session</button>
+        <button id="scopeAll" aria-pressed="false">All time</button>
+      </div>
+    </div>
     <div class="tiles">
       <div><span class="tv" id="stLast">—</span><span class="tl">Last note</span></div>
       <div><span class="tv" id="stAvg">—</span><span class="tl">Average, last 10</span></div>
-      <div><span class="tv" id="stBest">—</span><span class="tl">Best ever</span></div>
+      <div><span class="tv" id="stBest">—</span><span class="tl" id="stBestLabel">Best this session</span></div>
     </div>
     <div class="goal">
       <label for="goal">Goal per note</label>
@@ -285,6 +293,8 @@ function computeStats(hist) {
 }
 // </stats>
 const fmt = (ms) => (ms == null ? "—" : (ms / 1000).toFixed(1) + "s");
+let scope = "session"; // "session" = since this page was opened, "all" = everything saved
+const sessionStart = Date.now();
 let history = [];
 try {
   history = JSON.parse(localStorage.getItem("noteTrainerHistory") || "[]");
@@ -305,7 +315,10 @@ LETTERS.forEach((L) => {
 });
 
 function renderStats() {
-  const modeHist = history.filter((r) => (r.mode || "see") === state.mode);
+  const modeHist = history.filter((r) => (r.mode || "see") === state.mode && (scope === "all" || (r.t || 0) >= sessionStart));
+  $("scopeSession").setAttribute("aria-pressed", scope === "session");
+  $("scopeAll").setAttribute("aria-pressed", scope === "all");
+  $("stBestLabel").textContent = scope === "all" ? "Best ever" : "Best this session";
   const s = computeStats(modeHist);
   $("stMode").textContent = "Speed in " + (state.mode === "hear" ? "Hear it" : "See it") + " mode";
   $("stLast").textContent = fmt(s.last);
@@ -609,6 +622,8 @@ $("goal").addEventListener("input", () => {
   try { localStorage.setItem("noteTrainerGoal", String(g)); } catch (e) {}
   renderStats();
 });
+$("scopeSession").addEventListener("click", () => { scope = "session"; renderStats(); });
+$("scopeAll").addEventListener("click", () => { scope = "all"; renderStats(); });
 let resetArmed = false, resetTimer = 0;
 $("resetStats").addEventListener("click", () => {
   const b = $("resetStats");
