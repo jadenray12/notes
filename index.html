@@ -141,6 +141,15 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
 .stats .btn.link { align-self: flex-start; }
 .statshead { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
 .seg.small button { padding: 5px 10px; font-size: 13px; }
+.pgline { font-weight: 600; }
+.pgnote { font-size: 13px; color: var(--muted); }
+.chartwrap { overflow-x: auto; }
+.chartwrap svg { display: block; width: 100%; height: auto; min-width: 280px; }
+.chartwrap .grid { stroke: var(--line); stroke-width: 1; }
+.chartwrap .ax { fill: var(--muted); font-family: var(--mono); font-size: 9px; }
+.chartwrap .bar { fill: var(--accent); }
+.chartwrap .goalline { stroke: var(--good); stroke-width: 1.5; stroke-dasharray: 4 3; fill: none; }
+.chartwrap .goaltxt { fill: var(--good); }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -208,6 +217,15 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
     <div class="eyebrow">Average by letter (last 5 each)</div>
     <div class="byletter" id="byLetter"></div>
     <button class="btn link" id="resetStats">Reset stats</button>
+  </section>
+
+  <section class="stats progress" aria-label="Progress over time">
+    <div class="eyebrow" id="pgTitle">Progress</div>
+    <div class="pgline" id="pgLine">Clear 10 notes to see your trend.</div>
+    <div class="chartwrap" id="pgWrap" hidden>
+      <svg id="pgChart" viewBox="0 0 320 160" role="img" aria-label="Average seconds per note, by day"></svg>
+    </div>
+    <div class="pgnote" id="pgNote"></div>
   </section>
 
   <div class="notice" id="notice" role="status" hidden></div>
@@ -292,6 +310,26 @@ function computeStats(hist) {
   return { last, avg, best, byLetter };
 }
 // </stats>
+// <progress>
+function dayKey(t) {
+  const d = new Date(t);
+  return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
+}
+// average ms per note for each calendar day that has notes, oldest first
+function computeDaily(hist) {
+  const m = {};
+  hist.forEach((r) => { if (r.t) (m[dayKey(r.t)] = m[dayKey(r.t)] || []).push(r.ms); });
+  return Object.keys(m).sort().map((k) => ({ day: k, n: m[k].length, avg: m[k].reduce((a, b) => a + b, 0) / m[k].length }));
+}
+// your first notes against your latest notes; null until there is enough to compare
+function computeTrend(hist) {
+  const n = Math.min(20, Math.floor(hist.length / 2));
+  if (hist.length < 10 || n < 5) return null;
+  const avg = (a) => a.reduce((s, r) => s + r.ms, 0) / a.length;
+  const first = avg(hist.slice(0, n)), last = avg(hist.slice(-n));
+  return { n: n, first: first, last: last, pct: ((first - last) / first) * 100 };
+}
+// </progress>
 const fmt = (ms) => (ms == null ? "—" : (ms / 1000).toFixed(1) + "s");
 let scope = "session"; // "session" = since this page was opened, "all" = everything saved
 const sessionStart = Date.now();
@@ -301,7 +339,7 @@ try {
   if (!Array.isArray(history)) history = [];
   history = history.filter((r) => r && typeof r.ms === "number" && typeof r.L === "string");
 } catch (e) { history = []; }
-function saveHistory() { try { localStorage.setItem("noteTrainerHistory", JSON.stringify(history.slice(-300))); } catch (e) {} }
+function saveHistory() { try { localStorage.setItem("noteTrainerHistory", JSON.stringify(history.slice(-5000))); } catch (e) {} }
 let goalSec = 5;
 try { const g = parseFloat(localStorage.getItem("noteTrainerGoal")); if (g > 0) goalSec = g; } catch (e) {}
 
@@ -339,6 +377,47 @@ function renderStats() {
     c.querySelector(".blv").textContent = v == null ? "—" : (v / 1000).toFixed(1);
     c.classList.toggle("slow", slowest != null && v === slowest);
   });
+  renderProgress();
+}
+
+function renderProgress() {
+  const h = history.filter((r) => (r.mode || "see") === state.mode);
+  $("pgTitle").textContent = "Progress in " + (state.mode === "hear" ? "Hear it" : "See it") + " mode, all time";
+  const trend = computeTrend(h);
+  const line = $("pgLine");
+  if (!trend) line.textContent = "Clear 10 notes to see your trend (" + h.length + " so far).";
+  else if (trend.pct >= 1) line.textContent = "You're " + Math.round(trend.pct) + "% faster than your first " + trend.n + " notes (" + fmt(trend.first) + " to " + fmt(trend.last) + ").";
+  else if (trend.pct <= -1) line.textContent = "You're " + Math.round(-trend.pct) + "% slower than your first " + trend.n + " notes (" + fmt(trend.first) + " to " + fmt(trend.last) + ").";
+  else line.textContent = "About the same speed as your first " + trend.n + " notes (" + fmt(trend.first) + " to " + fmt(trend.last) + ").";
+
+  const days = computeDaily(h).slice(-14);
+  $("pgWrap").hidden = days.length === 0;
+  const today = days.length && days[days.length - 1].day === dayKey(Date.now()) ? days[days.length - 1] : null;
+  $("pgNote").textContent = (today ? "Today: " + today.n + " notes, average " + fmt(today.avg) + ". " : "") + "Saved on this device only.";
+  if (!days.length) return;
+
+  const W = 320, H = 160, L = 30, R = 8, T = 12, B = 26;
+  const pw = W - L - R, ph = H - T - B;
+  const maxSec = Math.ceil(Math.max.apply(null, [goalSec].concat(days.map((d) => d.avg / 1000))) * 1.1);
+  const y = (sec) => T + ph - (sec / maxSec) * ph;
+  const f1 = (v) => v.toFixed(1);
+  let s = "";
+  [0, maxSec / 2, maxSec].forEach((v) => {
+    s += '<line class="grid" x1="' + L + '" x2="' + (W - R) + '" y1="' + f1(y(v)) + '" y2="' + f1(y(v)) + '"/>';
+    s += '<text class="ax" x="' + (L - 4) + '" y="' + f1(y(v) + 3) + '" text-anchor="end">' + (Number.isInteger(v) ? v : f1(v)) + "</text>";
+  });
+  const slot = pw / days.length, bw = Math.min(28, slot * 0.62);
+  days.forEach((d, i) => {
+    const cx = L + slot * i + slot / 2, top = y(d.avg / 1000);
+    s += '<rect class="bar" x="' + f1(cx - bw / 2) + '" y="' + f1(top) + '" width="' + f1(bw) + '" height="' + f1(T + ph - top) + '" rx="2"/>';
+    s += '<text class="ax" x="' + f1(cx) + '" y="' + f1(top - 3) + '" text-anchor="middle">' + f1(d.avg / 1000) + "</text>";
+    if (days.length <= 7 || (days.length - 1 - i) % 2 === 0) {
+      s += '<text class="ax" x="' + f1(cx) + '" y="' + (H - 9) + '" text-anchor="middle">' + d.day.slice(5).replace("-", "/") + "</text>";
+    }
+  });
+  s += '<line class="goalline" x1="' + L + '" x2="' + (W - R) + '" y1="' + f1(y(goalSec)) + '" y2="' + f1(y(goalSec)) + '"/>';
+  s += '<text class="ax goaltxt" x="' + (W - R) + '" y="' + f1(y(goalSec) - 3) + '" text-anchor="end">goal ' + goalSec + "s</text>";
+  $("pgChart").innerHTML = s;
 }
 
 // ---------- keybed ----------
