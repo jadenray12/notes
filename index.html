@@ -118,6 +118,27 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
 .pad .row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
 .pad .row button { padding: 14px 0; font-family: var(--display); font-weight: 800; font-size: 1.2rem; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; cursor: pointer; }
 .foot { color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.toprow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
+.timer { font-family: var(--mono); font-size: 1.1rem; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); }
+.timer.over { color: var(--bad); }
+.stats { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+.tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+.tiles > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.tv { font-family: var(--display); font-weight: 800; font-size: 1.7rem; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.tl { font-size: 13px; color: var(--muted); }
+.goal { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 15px; }
+.goal input { width: 5.5em; font: inherit; font-family: var(--mono); padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--bg); color: var(--ink); }
+.chip { font-size: 13px; font-weight: 600; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--line); }
+.chip.good { color: var(--good); border-color: var(--good); }
+.chip.bad { color: var(--bad); border-color: var(--bad); }
+.chip[hidden] { display: none; }
+.byletter { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.bl { border: 1px solid var(--line); border-radius: 8px; padding: 6px 0; text-align: center; display: flex; flex-direction: column; min-width: 0; }
+.bll { font-family: var(--display); font-weight: 800; }
+.blv { font-family: var(--mono); font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.bl.slow { border-color: var(--bad); }
+.bl.slow .blv { color: var(--bad); }
+.stats .btn.link { align-self: flex-start; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
 </style>
 </head>
@@ -132,7 +153,10 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
   </header>
 
   <section class="stage" id="stage" aria-live="polite">
-    <div class="eyebrow" id="eyebrow">Play this note 4 times</div>
+    <div class="toprow">
+      <div class="eyebrow" id="eyebrow">Play this note 4 times</div>
+      <div class="timer" id="timer" aria-label="Time on this note">0.0s</div>
+    </div>
     <div class="letter" id="letter">C</div>
     <div class="pips" id="pips" aria-hidden="true"></div>
     <div class="status idle" id="status">Press Start listening, then play the note.</div>
@@ -159,6 +183,24 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
     <label for="sens">Mic sensitivity</label>
     <input type="range" id="sens" min="0" max="100" value="55">
   </div>
+
+  <section class="stats" aria-label="Speed">
+    <div class="eyebrow" id="stMode">Speed</div>
+    <div class="tiles">
+      <div><span class="tv" id="stLast">—</span><span class="tl">Last note</span></div>
+      <div><span class="tv" id="stAvg">—</span><span class="tl">Average, last 10</span></div>
+      <div><span class="tv" id="stBest">—</span><span class="tl">Best ever</span></div>
+    </div>
+    <div class="goal">
+      <label for="goal">Goal per note</label>
+      <input id="goal" type="number" min="1" max="60" step="0.5" value="5" inputmode="decimal">
+      <span>sec</span>
+      <span class="chip" id="goalChip" hidden></span>
+    </div>
+    <div class="eyebrow">Average by letter (last 5 each)</div>
+    <div class="byletter" id="byLetter"></div>
+    <button class="btn link" id="resetStats">Reset stats</button>
+  </section>
 
   <div class="notice" id="notice" role="status" hidden></div>
 
@@ -221,9 +263,70 @@ function detectPitch(x, sr) {
 // </detector>
 
 const $ = (id) => document.getElementById(id);
-const state = { target: null, count: 0, mode: "see", revealed: false, locked: false, cleared: 0, micOn: false, midiOn: false, blockedUntil: 0 };
+const state = { target: null, count: 0, mode: "see", revealed: false, locked: false, cleared: 0, micOn: false, midiOn: false, blockedUntil: 0, t0: null, misses: 0 };
 let ctx = null, stream = null, analyser = null, buf = null, rafId = 0, lastTick = 0, level = 0;
 const gate = { open: false, t0: 0, peak: 0, counted: false, minAfter: Infinity, hist: [], wrongShown: false, lastHeardAt: 0 };
+
+// ---------- speed tracking ----------
+const LETTERS = ["A", "B", "C", "D", "E", "F", "G"];
+// <stats>
+function computeStats(hist) {
+  const ms = hist.map((r) => r.ms);
+  const last = ms.length ? ms[ms.length - 1] : null;
+  const recent = ms.slice(-10);
+  const avg = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : null;
+  const best = ms.length ? Math.min.apply(null, ms) : null;
+  const byLetter = {};
+  ["A", "B", "C", "D", "E", "F", "G"].forEach((L) => {
+    const r = hist.filter((x) => x.L === L).slice(-5);
+    byLetter[L] = r.length ? r.reduce((a, x) => a + x.ms, 0) / r.length : null;
+  });
+  return { last, avg, best, byLetter };
+}
+// </stats>
+const fmt = (ms) => (ms == null ? "—" : (ms / 1000).toFixed(1) + "s");
+let history = [];
+try {
+  history = JSON.parse(localStorage.getItem("noteTrainerHistory") || "[]");
+  if (!Array.isArray(history)) history = [];
+  history = history.filter((r) => r && typeof r.ms === "number" && typeof r.L === "string");
+} catch (e) { history = []; }
+function saveHistory() { try { localStorage.setItem("noteTrainerHistory", JSON.stringify(history.slice(-300))); } catch (e) {} }
+let goalSec = 5;
+try { const g = parseFloat(localStorage.getItem("noteTrainerGoal")); if (g > 0) goalSec = g; } catch (e) {}
+
+const byLetterEl = $("byLetter");
+LETTERS.forEach((L) => {
+  const c = document.createElement("div");
+  c.className = "bl";
+  c.dataset.L = L;
+  c.innerHTML = '<span class="bll">' + L + '</span><span class="blv">—</span>';
+  byLetterEl.appendChild(c);
+});
+
+function renderStats() {
+  const modeHist = history.filter((r) => (r.mode || "see") === state.mode);
+  const s = computeStats(modeHist);
+  $("stMode").textContent = "Speed in " + (state.mode === "hear" ? "Hear it" : "See it") + " mode";
+  $("stLast").textContent = fmt(s.last);
+  $("stAvg").textContent = fmt(s.avg);
+  $("stBest").textContent = fmt(s.best);
+  const chip = $("goalChip");
+  if (s.avg == null) { chip.hidden = true; }
+  else {
+    chip.hidden = false;
+    const diff = s.avg / 1000 - goalSec;
+    chip.className = "chip " + (diff <= 0 ? "good" : "bad");
+    chip.textContent = diff <= 0 ? "On goal" : (diff).toFixed(1) + "s over";
+  }
+  const vals = LETTERS.map((L) => s.byLetter[L]).filter((v) => v != null);
+  const slowest = vals.length >= 2 ? Math.max.apply(null, vals) : null;
+  byLetterEl.querySelectorAll(".bl").forEach((c) => {
+    const v = s.byLetter[c.dataset.L];
+    c.querySelector(".blv").textContent = v == null ? "—" : (v / 1000).toFixed(1);
+    c.classList.toggle("slow", slowest != null && v === slowest);
+  });
+}
 
 // ---------- keybed ----------
 const keysEl = $("keys");
@@ -288,7 +391,11 @@ function flashKey(pc, cls) {
 
 // ---------- game flow ----------
 function setTarget(n) {
-  state.target = n; state.count = 0; state.locked = false; state.revealed = false;
+  state.target = n; state.count = 0; state.locked = false; state.revealed = false; state.misses = 0;
+  // the clock starts when the note appears (in Hear it mode, once the tone has finished)
+  state.t0 = state.micOn || state.midiOn ? performance.now() + (state.mode === "hear" ? 1450 : 0) : null;
+  $("timer").textContent = "0.0s";
+  $("timer").classList.remove("over");
   resetOnset(performance.now(), 0);
   gate.open = false;
   state.blockedUntil = performance.now() + 350;
@@ -304,6 +411,7 @@ function pickNext() {
 
 function onPlayed(pc) {
   if (state.locked) return;
+  if (state.t0 == null) state.t0 = performance.now(); // tap mode: clock starts at your first tap
   if (pc === state.target.pc) {
     state.count++;
     flashKey(pc, "hit");
@@ -311,6 +419,7 @@ function onPlayed(pc) {
     if (state.count >= NEEDED) return complete();
     setStatus(state.count + " of " + NEEDED + ". Again.", "good");
   } else {
+    state.misses++;
     flashKey(pc, "wrong");
     setStatus(state.mode === "hear" && !state.revealed
       ? "That's " + PC_NAMES[pc] + ". Not it. Listen again."
@@ -319,10 +428,19 @@ function onPlayed(pc) {
 }
 function complete() {
   state.locked = true; state.revealed = true; state.cleared++;
-  state.blockedUntil = performance.now() + 1600;
+  const now = performance.now();
+  state.blockedUntil = now + 1600;
   $("cleared").textContent = "Notes cleared: " + state.cleared;
+  const ms = state.t0 == null ? null : Math.max(0, Math.round(now - state.t0));
+  if (ms != null) {
+    history.push({ L: state.target.L, ms: ms, miss: state.misses, mode: state.mode, t: Date.now() });
+    saveHistory();
+    $("timer").textContent = fmt(ms);
+    $("timer").classList.toggle("over", ms / 1000 > goalSec);
+  }
+  renderStats();
   render();
-  setStatus("That was " + state.target.L + ". Next note coming up.", "good");
+  setStatus("That was " + state.target.L + (ms != null ? " in " + fmt(ms) : "") + ". Next note coming up.", "good");
   setTimeout(pickNext, 1300);
 }
 
@@ -374,6 +492,7 @@ async function startMic() {
   src.connect(analyser);
   buf = new Float32Array(analyser.fftSize);
   state.micOn = true;
+  state.t0 = performance.now() + (state.mode === "hear" ? 1100 : 0); state.misses = 0;
   render();
   setStatus(readyStatus(), "idle");
   if (state.mode === "hear") playTone();
@@ -384,6 +503,7 @@ function stopMic() {
   if (stream) stream.getTracks().forEach((t) => t.stop());
   stream = null; analyser = null;
   state.micOn = false; gate.open = false; level = 0;
+  if (!state.locked) { state.t0 = null; $("timer").textContent = "0.0s"; $("timer").classList.remove("over"); }
   $("fill").style.transform = "scaleX(0)";
   $("heard").textContent = "—";
   render();
@@ -465,6 +585,7 @@ async function startMidi() {
     if (access.inputs.size === 0) { $("notice").textContent = "No MIDI keyboard found. Plug it in, then press the button again."; $("notice").hidden = false; return; }
     $("notice").hidden = true;
     state.midiOn = true;
+    state.t0 = performance.now() + (state.mode === "hear" ? 1100 : 0); state.misses = 0;
     render();
     setStatus(readyStatus(), "idle");
     if (state.mode === "hear") { ensureCtx(); playTone(); }
@@ -479,8 +600,37 @@ $("startBtn").addEventListener("click", () => (state.micOn ? stopMic() : startMi
 $("toneBtn").addEventListener("click", playTone);
 $("skipBtn").addEventListener("click", pickNext);
 $("revealBtn").addEventListener("click", () => { state.revealed = true; render(); });
-$("modeSee").addEventListener("click", () => { state.mode = "see"; render(); setStatus(readyStatus(), "idle"); });
-$("modeHear").addEventListener("click", () => { state.mode = "hear"; state.revealed = false; ensureCtx(); render(); setStatus(readyStatus(), "idle"); playTone(); });
+$("modeSee").addEventListener("click", () => { state.mode = "see"; render(); renderStats(); setStatus(readyStatus(), "idle"); });
+$("modeHear").addEventListener("click", () => { state.mode = "hear"; state.revealed = false; ensureCtx(); render(); renderStats(); setStatus(readyStatus(), "idle"); playTone(); });
+$("goal").addEventListener("input", () => {
+  const g = parseFloat($("goal").value);
+  if (!(g >= 1 && g <= 60)) return;
+  goalSec = g;
+  try { localStorage.setItem("noteTrainerGoal", String(g)); } catch (e) {}
+  renderStats();
+});
+let resetArmed = false, resetTimer = 0;
+$("resetStats").addEventListener("click", () => {
+  const b = $("resetStats");
+  if (!resetArmed) {
+    resetArmed = true;
+    b.textContent = "Tap again to erase all stats";
+    resetTimer = setTimeout(() => { resetArmed = false; b.textContent = "Reset stats"; }, 3000);
+    return;
+  }
+  clearTimeout(resetTimer);
+  resetArmed = false;
+  b.textContent = "Reset stats";
+  history = [];
+  saveHistory();
+  renderStats();
+});
+setInterval(() => {
+  if (state.t0 == null || state.locked) return;
+  const e = Math.max(0, performance.now() - state.t0);
+  $("timer").textContent = (e / 1000).toFixed(1) + "s";
+  $("timer").classList.toggle("over", e / 1000 > goalSec);
+}, 100);
 function setKeysHidden(hide) {
   keysEl.hidden = hide;
   $("keysBtn").textContent = hide ? "Show keyboard" : "Hide keyboard";
@@ -493,6 +643,8 @@ $("sens").addEventListener("input", updateTick);
 if (navigator.requestMIDIAccess) { $("midiBtn").hidden = false; $("midiBtn").addEventListener("click", startMidi); }
 
 updateTick();
+$("goal").value = goalSec;
+renderStats();
 pickNext();
 </script>
 </body>
