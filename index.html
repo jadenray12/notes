@@ -1,0 +1,499 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Note Trainer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Figtree:wght@400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* Layout: one narrow column. A big flash-card letter on top, a one-octave keybed under it
+   that lights the target key, then live "what I hear" readout and controls. */
+:root {
+  --bg: #edeff4;
+  --surface: #ffffff;
+  --ink: #14171f;
+  --muted: #586073;
+  --line: #d3d8e3;
+  --accent: #2848f0;
+  --accent-ink: #ffffff;
+  --good: #12805c;
+  --bad: #c93a4e;
+  --key: #fbfbfd;
+  --key-edge: #aeb4c4;
+  --key-ink: #3b4152;
+  --black-key: #171a22;
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --body: "Figtree", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: "DM Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0f1218;
+    --surface: #171b24;
+    --ink: #edeff6;
+    --muted: #9aa2b6;
+    --line: #2a3040;
+    --accent: #8aa0ff;
+    --accent-ink: #0f1218;
+    --good: #4cd3a1;
+    --bad: #ff7a8c;
+    --key: #e9ebf2;
+    --key-edge: #4a5163;
+    --key-ink: #3b4152;
+    --black-key: #0a0c11;
+    color-scheme: dark;
+  }
+}
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--body);
+  font-size: 16px;
+  line-height: 1.45;
+  padding-block: 20px 40px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.wrap { max-width: 560px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+button { font: inherit; color: inherit; }
+button:focus-visible, input:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+
+header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-spacing: -0.01em; margin: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: transparent; padding: 8px 14px; cursor: pointer; font-weight: 500; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+
+.stage { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px 18px 20px; display: flex; flex-direction: column; gap: 6px; }
+.eyebrow { font-family: var(--mono); font-size: 12px; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.letter {
+  font-family: var(--display); font-weight: 800; line-height: 0.95; letter-spacing: -0.04em;
+  font-size: clamp(7rem, 34vw, 12rem); text-align: center; margin: 6px 0 2px;
+  transition: color 0.2s;
+}
+.letter.done { color: var(--good); }
+.pips { display: flex; justify-content: center; gap: 12px; margin-bottom: 8px; }
+.pip { width: 16px; height: 16px; border-radius: 50%; border: 2px solid var(--line); background: transparent; transition: background 0.15s, border-color 0.15s; }
+.pip.on { background: var(--accent); border-color: var(--accent); }
+.stage.done .pip.on { background: var(--good); border-color: var(--good); }
+.status { text-align: center; min-height: 1.5em; font-weight: 500; }
+.status.good { color: var(--good); }
+.status.bad { color: var(--bad); }
+.status.idle { color: var(--muted); }
+
+.keys { position: relative; display: flex; height: 132px; border-radius: 0 0 8px 8px; }
+.white { flex: 1; background: var(--key); border: 1px solid var(--key-edge); border-top: 0; border-radius: 0 0 7px 7px; display: flex; align-items: flex-end; justify-content: center; padding-bottom: 8px; font-family: var(--mono); font-size: 13px; color: var(--key-ink); transition: background 0.12s; }
+.white + .white { margin-left: -1px; }
+.black { position: absolute; top: 0; height: 62%; width: 9%; background: var(--black-key); border-radius: 0 0 5px 5px; z-index: 2; transition: background 0.12s; }
+.white.target { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.white.hit { background: var(--good); border-color: var(--good); color: #fff; }
+.white.wrong, .black.wrong { background: var(--bad); border-color: var(--bad); color: #fff; }
+.keys[hidden] { display: none; }
+.keys.blind .white { color: transparent; }
+.keys.blind .white.target { background: var(--key); border-color: var(--key-edge); }
+.keys.blind .white.hit { background: var(--good); border-color: var(--good); }
+
+.heard { display: grid; grid-template-columns: auto 1fr; gap: 8px 16px; align-items: center; }
+.heard .val { font-family: var(--mono); font-size: 1.1rem; font-weight: 500; font-variant-numeric: tabular-nums; min-width: 9ch; }
+.meter { position: relative; height: 10px; border-radius: 6px; background: var(--line); overflow: hidden; grid-column: 1 / -1; }
+.meter .fill { position: absolute; inset: 0; background: var(--accent); transform-origin: left; transform: scaleX(0); }
+.meter .tick { position: absolute; top: 0; bottom: 0; width: 2px; background: var(--ink); opacity: 0.7; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px; }
+.btn { border: 1px solid var(--line); background: var(--surface); border-radius: 10px; padding: 11px 16px; font-weight: 600; cursor: pointer; }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); flex: 1 1 180px; }
+.btn.link { border-color: transparent; background: transparent; color: var(--muted); text-decoration: underline; padding-inline: 6px; font-weight: 500; }
+.btn[hidden] { display: none; }
+
+.settings { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; color: var(--muted); font-size: 14px; }
+.settings input[type=range] { flex: 1 1 160px; accent-color: var(--accent); }
+
+.notice { border: 1px solid var(--bad); color: var(--ink); background: var(--surface); border-radius: 12px; padding: 12px 14px; font-size: 14px; }
+.pad { display: flex; flex-direction: column; gap: 8px; }
+.pad .row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
+.pad .row button { padding: 14px 0; font-family: var(--display); font-weight: 800; font-size: 1.2rem; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; cursor: pointer; }
+.foot { color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Note Trainer</h1>
+    <div class="seg" role="group" aria-label="Mode">
+      <button id="modeSee" aria-pressed="true">See it</button>
+      <button id="modeHear" aria-pressed="false">Hear it</button>
+    </div>
+  </header>
+
+  <section class="stage" id="stage" aria-live="polite">
+    <div class="eyebrow" id="eyebrow">Play this note 4 times</div>
+    <div class="letter" id="letter">C</div>
+    <div class="pips" id="pips" aria-hidden="true"></div>
+    <div class="status idle" id="status">Press Start listening, then play the note.</div>
+  </section>
+
+  <div class="keys" id="keys" aria-hidden="true"></div>
+
+  <div class="heard">
+    <span class="eyebrow">Hearing</span>
+    <span class="val" id="heard">—</span>
+    <div class="meter" aria-hidden="true"><div class="fill" id="fill"></div><div class="tick" id="tick"></div></div>
+  </div>
+
+  <div class="controls">
+    <button class="btn primary" id="startBtn">Start listening</button>
+    <button class="btn" id="toneBtn">Hear it</button>
+    <button class="btn" id="skipBtn">Skip</button>
+    <button class="btn" id="keysBtn" aria-pressed="false">Hide keyboard</button>
+    <button class="btn link" id="revealBtn" hidden>Show letter</button>
+    <button class="btn link" id="midiBtn" hidden>Use a MIDI keyboard</button>
+  </div>
+
+  <div class="settings">
+    <label for="sens">Mic sensitivity</label>
+    <input type="range" id="sens" min="0" max="100" value="55">
+  </div>
+
+  <div class="notice" id="notice" role="status" hidden></div>
+
+  <div class="pad" id="pad" hidden>
+    <span class="eyebrow">No mic? Tap the note instead</span>
+    <div class="row" id="padRow"></div>
+  </div>
+
+  <div class="foot"><span id="cleared">Notes cleared: 0</span><span>Each note counts once per press</span></div>
+</div>
+
+<script>
+const NOTES = [
+  { L: "C", pc: 0, f: 261.63 }, { L: "D", pc: 2, f: 293.66 }, { L: "E", pc: 4, f: 329.63 },
+  { L: "F", pc: 5, f: 349.23 }, { L: "G", pc: 7, f: 392.0 }, { L: "A", pc: 9, f: 440.0 }, { L: "B", pc: 11, f: 493.88 }
+];
+const PC_NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
+const NEEDED = 4;
+
+// <detector>
+// YIN pitch detector. x: Float32Array of time-domain samples, sr: sample rate. Returns Hz or null.
+function detectPitch(x, sr) {
+  const W = 2048;
+  const tauMin = Math.max(2, Math.floor(sr / 2200));
+  const tauMax = Math.min(Math.floor(sr / 60), x.length - W - 2);
+  const start = Math.max(0, x.length - W - tauMax - 1);
+  const d = new Float32Array(tauMax + 1);
+  for (let tau = 1; tau <= tauMax; tau++) {
+    let s = 0;
+    for (let j = 0; j < W; j++) {
+      const diff = x[start + j] - x[start + j + tau];
+      s += diff * diff;
+    }
+    d[tau] = s;
+  }
+  const cm = new Float32Array(tauMax + 1);
+  cm[0] = 1;
+  let run = 0;
+  for (let tau = 1; tau <= tauMax; tau++) {
+    run += d[tau];
+    cm[tau] = run === 0 ? 1 : (d[tau] * tau) / run;
+  }
+  let tau = -1;
+  for (let t = tauMin; t < tauMax; t++) {
+    if (cm[t] < 0.15) {
+      while (t + 1 < tauMax && cm[t + 1] < cm[t]) t++;
+      tau = t;
+      break;
+    }
+  }
+  if (tau < 0) return null;
+  let better = tau;
+  if (tau > 1 && tau < tauMax) {
+    const a = cm[tau - 1], b = cm[tau], c = cm[tau + 1];
+    const den = 2 * (2 * b - a - c);
+    if (den !== 0) better = tau + (c - a) / den;
+  }
+  return sr / better;
+}
+// </detector>
+
+const $ = (id) => document.getElementById(id);
+const state = { target: null, count: 0, mode: "see", revealed: false, locked: false, cleared: 0, micOn: false, midiOn: false, blockedUntil: 0 };
+let ctx = null, stream = null, analyser = null, buf = null, rafId = 0, lastTick = 0, level = 0;
+const gate = { open: false, t0: 0, peak: 0, counted: false, minAfter: Infinity, hist: [], wrongShown: false, lastHeardAt: 0 };
+
+// ---------- keybed ----------
+const keysEl = $("keys");
+NOTES.forEach((n) => {
+  const k = document.createElement("div");
+  k.className = "white";
+  k.dataset.pc = n.pc;
+  k.innerHTML = '<span class="lbl">' + n.L + "</span>";
+  keysEl.appendChild(k);
+});
+[[0, 1], [1, 3], [3, 6], [4, 8], [5, 10]].forEach(([i, pc]) => {
+  const b = document.createElement("div");
+  b.className = "black";
+  b.dataset.pc = pc;
+  b.style.left = ((i + 1) * (100 / 7) - 4.5) + "%";
+  keysEl.appendChild(b);
+});
+const padRow = $("padRow");
+NOTES.slice().sort((a, b) => a.L.localeCompare(b.L)).forEach((n) => {
+  const b = document.createElement("button");
+  b.textContent = n.L;
+  b.setAttribute("aria-label", "Note " + n.L);
+  b.addEventListener("click", () => { ensureCtx(); onPlayed(n.pc); });
+  padRow.appendChild(b);
+});
+const pipsEl = $("pips");
+for (let i = 0; i < NEEDED; i++) { const p = document.createElement("span"); p.className = "pip"; pipsEl.appendChild(p); }
+
+// ---------- rendering ----------
+function setStatus(text, kind) { const s = $("status"); s.textContent = text; s.className = "status " + (kind || ""); }
+function sensThreshold() { return 0.05 * Math.pow(0.06, Number($("sens").value) / 100); }
+function updateTick() { $("tick").style.left = Math.min(100, Math.sqrt(sensThreshold() / 0.2) * 100) + "%"; }
+
+function render() {
+  const hidden = state.mode === "hear" && !state.revealed;
+  $("letter").textContent = hidden ? "?" : state.target.L;
+  $("letter").classList.toggle("done", state.locked);
+  $("stage").classList.toggle("done", state.locked);
+  keysEl.classList.toggle("blind", hidden);
+  keysEl.querySelectorAll(".white").forEach((k) => k.classList.toggle("target", !hidden && Number(k.dataset.pc) === state.target.pc));
+  pipsEl.querySelectorAll(".pip").forEach((p, i) => p.classList.toggle("on", i < state.count));
+  $("revealBtn").hidden = !(state.mode === "hear" && !state.revealed);
+  $("modeSee").setAttribute("aria-pressed", state.mode === "see");
+  $("modeHear").setAttribute("aria-pressed", state.mode === "hear");
+  $("eyebrow").textContent = state.mode === "hear" ? "Listen, then play it 4 times" : "Play this note 4 times";
+  $("pad").hidden = state.micOn || state.midiOn;
+  $("startBtn").textContent = state.micOn ? "Stop listening" : "Start listening";
+}
+
+function readyStatus() {
+  if (state.mode === "hear") return state.micOn || state.midiOn ? "Listen, then play that note." : "Press Start listening, then play the note you hear.";
+  return state.micOn || state.midiOn ? "Listening. Play " + state.target.L + "." : "Press Start listening, then play " + state.target.L + ".";
+}
+
+function flashKey(pc, cls) {
+  const el = keysEl.querySelector('[data-pc="' + pc + '"]');
+  if (!el) return;
+  el.classList.add(cls);
+  clearTimeout(el._t);
+  el._t = setTimeout(() => el.classList.remove(cls), cls === "hit" ? 450 : 500);
+}
+
+// ---------- game flow ----------
+function setTarget(n) {
+  state.target = n; state.count = 0; state.locked = false; state.revealed = false;
+  resetOnset(performance.now(), 0);
+  gate.open = false;
+  state.blockedUntil = performance.now() + 350;
+  render();
+  setStatus(readyStatus(), "idle");
+  if (state.mode === "hear" && ctx && ctx.state === "running") setTimeout(() => playTone(), 350);
+}
+function pickNext() {
+  let n;
+  do { n = NOTES[Math.floor(Math.random() * NOTES.length)]; } while (state.target && n.L === state.target.L);
+  setTarget(n);
+}
+
+function onPlayed(pc) {
+  if (state.locked) return;
+  if (pc === state.target.pc) {
+    state.count++;
+    flashKey(pc, "hit");
+    render();
+    if (state.count >= NEEDED) return complete();
+    setStatus(state.count + " of " + NEEDED + ". Again.", "good");
+  } else {
+    flashKey(pc, "wrong");
+    setStatus(state.mode === "hear" && !state.revealed
+      ? "That's " + PC_NAMES[pc] + ". Not it. Listen again."
+      : "That's " + PC_NAMES[pc] + ". Looking for " + state.target.L + ".", "bad");
+  }
+}
+function complete() {
+  state.locked = true; state.revealed = true; state.cleared++;
+  state.blockedUntil = performance.now() + 1600;
+  $("cleared").textContent = "Notes cleared: " + state.cleared;
+  render();
+  setStatus("That was " + state.target.L + ". Next note coming up.", "good");
+  setTimeout(pickNext, 1300);
+}
+
+// ---------- audio ----------
+function ensureCtx() {
+  if (!ctx) ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === "suspended") ctx.resume();
+}
+function playTone() {
+  ensureCtx();
+  const dur = 1.1, t = ctx.currentTime;
+  const o = ctx.createOscillator(), g = ctx.createGain();
+  o.type = "triangle";
+  o.frequency.value = state.target.f;
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.linearRampToValueAtTime(0.35, t + 0.02);
+  g.gain.exponentialRampToValueAtTime(0.001, t + dur);
+  o.connect(g); g.connect(ctx.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+  // keep the mic from hearing our own reference tone
+  state.blockedUntil = performance.now() + dur * 1000 + 350;
+  gate.open = false;
+}
+
+function micFail(err) {
+  const n = $("notice");
+  const denied = err && (err.name === "NotAllowedError" || err.name === "SecurityError");
+  n.textContent = !navigator.mediaDevices
+    ? "This page can't reach a microphone here. Open the file directly in Chrome or Safari, or tap the notes below instead."
+    : denied
+      ? "The microphone is blocked. Allow mic access for this page in the browser's address bar, then press Start listening again. You can tap the notes below in the meantime."
+      : "No microphone was found. Plug one in or tap the notes below instead.";
+  n.hidden = false;
+  state.micOn = false;
+  render();
+}
+
+async function startMic() {
+  $("notice").hidden = true;
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) return micFail(null);
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false } });
+  } catch (e) { return micFail(e); }
+  ensureCtx();
+  const src = ctx.createMediaStreamSource(stream);
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = 4096;
+  analyser.smoothingTimeConstant = 0;
+  src.connect(analyser);
+  buf = new Float32Array(analyser.fftSize);
+  state.micOn = true;
+  render();
+  setStatus(readyStatus(), "idle");
+  if (state.mode === "hear") playTone();
+  rafId = requestAnimationFrame(loop);
+}
+function stopMic() {
+  cancelAnimationFrame(rafId);
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  stream = null; analyser = null;
+  state.micOn = false; gate.open = false; level = 0;
+  $("fill").style.transform = "scaleX(0)";
+  $("heard").textContent = "—";
+  render();
+  setStatus(readyStatus(), "idle");
+}
+
+function resetOnset(now, rms) {
+  gate.t0 = now; gate.peak = rms; gate.counted = false; gate.minAfter = Infinity; gate.hist = []; gate.wrongShown = false;
+}
+
+function loop(now) {
+  rafId = requestAnimationFrame(loop);
+  if (now - lastTick < 30) return;
+  lastTick = now;
+  analyser.getFloatTimeDomainData(buf);
+  process(now);
+}
+
+function process(now) {
+  const N = buf.length;
+  let sum = 0;
+  for (let i = N - 2048; i < N; i++) sum += buf[i] * buf[i];
+  const rms = Math.sqrt(sum / 2048);
+  level = Math.max(rms, level * 0.9);
+  $("fill").style.transform = "scaleX(" + Math.min(1, Math.sqrt(level / 0.2)) + ")";
+
+  const thrOn = sensThreshold(), thrOff = thrOn * 0.5;
+  if (now < state.blockedUntil) { gate.open = false; return; }
+
+  if (!gate.open) {
+    if (rms > thrOn) { gate.open = true; resetOnset(now, rms); }
+    else { if (now - gate.lastHeardAt > 700) $("heard").textContent = "—"; return; }
+  } else {
+    gate.peak = Math.max(gate.peak, rms);
+    if (now - gate.t0 > 150) {
+      gate.minAfter = Math.min(gate.minAfter, rms);
+      // a fresh key press while the last one is still ringing
+      if (rms > gate.minAfter * 2.2 && rms > thrOn * 1.5) resetOnset(now, rms);
+    }
+    if (rms < Math.max(thrOff, gate.peak * 0.25)) { gate.open = false; return; }
+  }
+
+  if (now - gate.t0 < 70) return; // skip the unstable attack
+  const f = detectPitch(buf, ctx.sampleRate);
+  if (!f) { gate.hist = []; return; }
+  const m = 69 + 12 * Math.log2(f / 440);
+  const nearest = Math.round(m);
+  const cents = Math.round((m - nearest) * 100);
+  const pc = ((nearest % 12) + 12) % 12;
+  const oct = Math.floor(nearest / 12) - 1;
+  $("heard").textContent = PC_NAMES[pc] + oct + "  " + (cents > 0 ? "+" : "") + cents + "¢";
+  gate.lastHeardAt = now;
+  gate.hist.push(pc);
+  if (gate.hist.length > 3) gate.hist.shift();
+  if (gate.hist.length === 3 && gate.hist.every((x) => x === pc)) {
+    if (pc === state.target.pc) {
+      if (!gate.counted) { gate.counted = true; onPlayed(pc); }
+    } else if (!gate.wrongShown && !gate.counted) {
+      gate.wrongShown = true; onPlayed(pc);
+    }
+  }
+}
+
+// ---------- MIDI (optional, exact notes from a USB or Bluetooth keyboard) ----------
+async function startMidi() {
+  try {
+    const access = await navigator.requestMIDIAccess();
+    const hook = () => access.inputs.forEach((inp) => {
+      inp.onmidimessage = (e) => {
+        const [st, note, vel] = e.data;
+        if ((st & 0xf0) === 0x90 && vel > 0) {
+          $("heard").textContent = PC_NAMES[note % 12] + (Math.floor(note / 12) - 1);
+          onPlayed(note % 12);
+        }
+      };
+    });
+    hook();
+    access.onstatechange = hook;
+    if (access.inputs.size === 0) { $("notice").textContent = "No MIDI keyboard found. Plug it in, then press the button again."; $("notice").hidden = false; return; }
+    $("notice").hidden = true;
+    state.midiOn = true;
+    render();
+    setStatus(readyStatus(), "idle");
+    if (state.mode === "hear") { ensureCtx(); playTone(); }
+  } catch (e) {
+    $("notice").textContent = "MIDI access was refused. Use the microphone instead.";
+    $("notice").hidden = false;
+  }
+}
+
+// ---------- wiring ----------
+$("startBtn").addEventListener("click", () => (state.micOn ? stopMic() : startMic()));
+$("toneBtn").addEventListener("click", playTone);
+$("skipBtn").addEventListener("click", pickNext);
+$("revealBtn").addEventListener("click", () => { state.revealed = true; render(); });
+$("modeSee").addEventListener("click", () => { state.mode = "see"; render(); setStatus(readyStatus(), "idle"); });
+$("modeHear").addEventListener("click", () => { state.mode = "hear"; state.revealed = false; ensureCtx(); render(); setStatus(readyStatus(), "idle"); playTone(); });
+function setKeysHidden(hide) {
+  keysEl.hidden = hide;
+  $("keysBtn").textContent = hide ? "Show keyboard" : "Hide keyboard";
+  $("keysBtn").setAttribute("aria-pressed", hide);
+  try { localStorage.setItem("noteTrainerHideKeys", hide ? "1" : "0"); } catch (e) {}
+}
+$("keysBtn").addEventListener("click", () => setKeysHidden(!keysEl.hidden));
+try { if (localStorage.getItem("noteTrainerHideKeys") === "1") setKeysHidden(true); } catch (e) {}
+$("sens").addEventListener("input", updateTick);
+if (navigator.requestMIDIAccess) { $("midiBtn").hidden = false; $("midiBtn").addEventListener("click", startMidi); }
+
+updateTick();
+pickNext();
+</script>
+</body>
+</html>
