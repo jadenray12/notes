@@ -121,6 +121,9 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
 .toprow { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; }
 .timer { font-family: var(--mono); font-size: 1.1rem; font-weight: 500; font-variant-numeric: tabular-nums; color: var(--muted); }
 .timer.over { color: var(--bad); }
+.fingering { display: flex; justify-content: center; align-items: center; gap: 12px; margin-bottom: 12px; }
+.hand { font-family: var(--mono); font-size: 14px; font-weight: 500; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.fnum { font-family: var(--display); font-weight: 800; font-size: 1.7rem; line-height: 1; width: 2.4rem; height: 2.4rem; display: grid; place-items: center; border-radius: 50%; border: 2px solid var(--ink); font-variant-numeric: tabular-nums; }
 .stats { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
 .tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
 .tiles > div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
@@ -169,6 +172,10 @@ h1 { font-family: var(--display); font-weight: 800; font-size: 1.35rem; letter-s
       <div class="timer" id="timer" aria-label="Time on this note">0.0s</div>
     </div>
     <div class="letter" id="letter">C</div>
+    <div class="fingering" aria-label="Which finger to use">
+      <span class="hand" id="hand">Left hand</span>
+      <span class="fnum" id="fnum">1</span>
+    </div>
     <div class="pips" id="pips" aria-hidden="true"></div>
     <div class="status idle" id="status">Press Start listening, then play the note.</div>
   </section>
@@ -289,7 +296,7 @@ function detectPitch(x, sr) {
 // </detector>
 
 const $ = (id) => document.getElementById(id);
-const state = { target: null, count: 0, mode: "see", revealed: false, locked: false, cleared: 0, micOn: false, midiOn: false, blockedUntil: 0, t0: null, misses: 0 };
+const state = { target: null, count: 0, mode: "see", revealed: false, locked: false, cleared: 0, micOn: false, midiOn: false, blockedUntil: 0, t0: null, misses: 0, hand: "Left", finger: 1 };
 let ctx = null, stream = null, analyser = null, buf = null, rafId = 0, lastTick = 0, level = 0;
 const gate = { open: false, t0: 0, peak: 0, counted: false, minAfter: Infinity, hist: [], wrongShown: false, lastHeardAt: 0 };
 
@@ -456,6 +463,8 @@ function render() {
   const hidden = state.mode === "hear" && !state.revealed;
   $("letter").textContent = hidden ? "?" : state.target.L;
   $("letter").classList.toggle("done", state.locked);
+  $("hand").textContent = state.hand + " hand";
+  $("fnum").textContent = state.finger;
   $("stage").classList.toggle("done", state.locked);
   keysEl.classList.toggle("blind", hidden);
   keysEl.querySelectorAll(".white").forEach((k) => k.classList.toggle("target", !hidden && Number(k.dataset.pc) === state.target.pc));
@@ -484,6 +493,8 @@ function flashKey(pc, cls) {
 // ---------- game flow ----------
 function setTarget(n) {
   state.target = n; state.count = 0; state.locked = false; state.revealed = false; state.misses = 0;
+  state.hand = Math.random() < 0.5 ? "Left" : "Right"; // which hand to play it with
+  state.finger = 1 + Math.floor(Math.random() * 5);     // 1 = thumb ... 5 = pinky
   // the clock starts when the note appears (in Hear it mode, once the tone has finished)
   state.t0 = state.micOn || state.midiOn ? performance.now() + (state.mode === "hear" ? 1450 : 0) : null;
   $("timer").textContent = "0.0s";
@@ -525,7 +536,7 @@ function complete() {
   $("cleared").textContent = "Notes cleared: " + state.cleared;
   const ms = state.t0 == null ? null : Math.max(0, Math.round(now - state.t0));
   if (ms != null) {
-    history.push({ L: state.target.L, ms: ms, miss: state.misses, mode: state.mode, t: Date.now() });
+    history.push({ L: state.target.L, ms: ms, miss: state.misses, mode: state.mode, hand: state.hand, finger: state.finger, t: Date.now() });
     saveHistory();
     $("timer").textContent = fmt(ms);
     $("timer").classList.toggle("over", ms / 1000 > goalSec);
